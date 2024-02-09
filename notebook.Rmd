@@ -1,0 +1,233 @@
+---
+title: "Spaceship Titanic"
+output: html_notebook
+---
+ # Introduction
+ 
+ This is a kaggle competition to predict which passengers on an spaceship Titanic were transported to an alternate dimension. It will rely on a QDA model.
+ 
+ # Tidying
+ 
+ Libraries in use.
+ 
+```{r}
+library(tidyr)
+library(dplyr)
+```
+
+Getting the data and checking out its content. We can begin by changing each column to the correct type. There are also some missing values within each category to consider.
+
+```{r}
+data <- read.csv("train.csv", na.strings = c("", NA, "NA"))
+str(data)
+naniar::vis_miss(data)
+```
+ 
+## Correcting data types
+
+For `PassengerId`, we know that it "indicates a group the passenger is travelling with and ... their number within the group". There might be a correlation between being transported and the sized of the group. Furthermore, we shall use the groups to calculate any missing values. Hence, we shall extract the group number and group size and use it as a factor respectively numerical value.
+
+```{r}
+len <- unique(sapply(data$PassengerId, nchar))
+groupId <- sapply(data$PassengerId, substr, 1, 4, USE.NAMES = F)
+groupSize <-
+  sapply(data$PassengerId, substr, len - 1, len, USE.NAMES = F)
+
+data <- data %>%
+  mutate(groupId = as.factor(groupId),
+         groupSize = as.numeric(groupSize)) %>%
+  group_by(groupId) %>%
+  mutate(groupSize = max(groupSize, na.rm = TRUE))
+```
+ 
+ `HomePlanet`, `CryoSleep`, `Destination`, `VIP`, and `Transported` simply needs to be factorized.
+ 
+```{r}
+data <- data %>%
+    mutate(across(
+        c(HomePlanet, CryoSleep, Destination, VIP, Transported),
+        as.factor
+        ))
+```
+ 
+We shall separate the cabin into three columns and categorize them. It also seems likely that there should be synergy between these categories we need to consider later on.
+
+```{r}
+data <- data %>%
+  separate(Cabin, into = c("deck", "num", "side"), sep = "/") %>%
+  mutate(across(c("deck", "num", "side"), as.factor))
+```
+
+## Missing values
+
+Within groups, we use the mode for missing values. For single travelers, we will use the mode for within all of single travelers.
+
+```{r}
+getMode <- function(x) {
+  ux <- na.omit(x)
+  names(sort(table(ux), decreasing = TRUE))[1]
+}
+
+modes <- data %>%
+  mutate(groupSizeCategory = ifelse(groupSize > 1, "multiple", "single")) %>%
+  group_by(groupId, groupSizeCategory) %>%
+  transmute(
+    groupId = groupId,
+    modePlaner = getMode(HomePlanet),
+    modeSleep = getMode(CryoSleep),
+    modeDeck = getMode(deck),
+    modeNum = getMode(num),
+    modeSide = getMode(side),
+    modeDest = getMode(Destination),
+    modeVIP = getMode(VIP)
+  ) %>%
+  unique() %>%
+  ungroup() %>%
+  arrange(groupId) %>%
+  mutate(across(everything(), as.factor))
+
+data <- data %>%
+  left_join(modes, by = "groupId") %>%
+  mutate(
+    HomePlanet = coalesce(HomePlanet, modePlaner),
+    CryoSleep = coalesce(CryoSleep, modeSleep),
+    deck = coalesce(deck, modeDeck),
+    num = coalesce(num, modeNum),
+    side = coalesce(side, modeSide),
+    Destination = coalesce(Destination, modeDest),
+    VIP = coalesce(VIP, modeVIP)
+  )
+```
+
+For numerical values we use the same method as above, but use the average instead.
+
+```{r}
+averages <- data %>%
+  mutate(groupSizeCategory = ifelse(groupSize > 1, "multiple", "single")) %>%
+  group_by(groupId, groupSizeCategory) %>%
+  transmute(
+    avgAge = mean(Age, na.rm = T),
+    avgRoomService = mean(RoomService, na.rm = T),
+    avgFoodCourt = mean(FoodCourt, na.rm = T),
+    avgShoppingMall = mean(ShoppingMall, na.rm = T),
+    avgSpa = mean(Spa, na.rm = T),
+    avgVRDeck = mean(VRDeck, na.rm = T)
+  ) %>%
+  unique() %>%
+  ungroup() %>%
+  arrange(groupId)
+
+data <- data %>%
+  left_join(averages, by = "groupId") %>%
+  mutate(
+    Age = coalesce(Age, avgAge),
+    RoomService = coalesce(RoomService, avgRoomService),
+    FoodCourt = coalesce(FoodCourt, avgFoodCourt),
+    ShoppingMall = coalesce(ShoppingMall, avgShoppingMall),
+    Spa = coalesce(Spa, avgSpa),
+    VRDeck = coalesce(VRDeck, avgVRDeck)
+  ) %>%
+  ungroup(groupId) %>% 
+  na.omit()
+```   
+
+A final cleanup:
+
+- Too many `num`
+
+- No need for the mode/average cols
+
+- Remove Name, Id
+
+```{r}
+summary(data)
+
+data <- data %>%
+  select(
+    HomePlanet,
+    CryoSleep,
+    deck,
+    side,
+    Destination,
+    Age,
+    VIP,
+    RoomService,
+    FoodCourt,
+    ShoppingMall,
+    Spa,
+    VRDeck,
+    Transported,
+    groupSize
+  )
+```
+
+
+# Modeling
+
+Below we find the correlatio between being transported and the other variables.
+
+```{r}
+matr <- model.matrix(~0+., data=data) %>% 
+  cor(use="pairwise.complete.obs") 
+vec <- matr[,22]
+sort(abs(vec), decr = T)
+```
+
+By a backward substitution fitting, we've discovered the following significant predictors.
+
+```{r}
+model <-
+  glm(
+    Transported ~ HomePlanet + CryoSleep + side + Destination + Age + RoomService + FoodCourt + ShoppingMall + Spa + VRDeck + deck ,
+    data = data,
+    family = binomial
+  )
+
+summary(model)
+```
+
+# Prediction
+
+We shall now use the model to predict the transporation.
+
+```{r}
+testFull <- read.csv("test.csv", na.strings = c("", NA, "NA"))
+test <- testFull %>%
+  select(
+    HomePlanet,
+    CryoSleep,
+    Cabin,
+    Destination,
+    Age,
+    RoomService,
+    FoodCourt,
+    ShoppingMall,
+    Spa,
+    VRDeck
+  ) %>%
+  separate(Cabin, into = c("deck", "num", "side"), sep = "/") %>%
+  mutate(across(
+    c(HomePlanet, CryoSleep, Destination, "deck", "num", "side"),
+    as.factor
+  )) %>%
+  select(-num)
+```
+
+We have to impute NAs in the test data as well.
+
+```{r}
+test <- multiUS::KNNimp(test)
+```
+
+Prediction
+
+```{r}
+preds <- predict(model, test, type = "response")
+submission <- testFull %>%
+  select(PassengerId) %>%
+  mutate(Transported = ifelse(preds < 0.5, "False", "True"))
+
+write.csv(submission, "submission.csv", row.names = F)
+```
+
+
