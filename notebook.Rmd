@@ -173,7 +173,7 @@ vec <- matr[,22]
 sort(abs(vec), decr = T)
 ```
 
-By a backward substitution fitting, we've discovered the following significant predictors.
+By a backward substitution fitting, we've discovered the following significant predictors. We also implement a LDA and KNN to test if it performs better than logistic regression. We observe the logistic regression to perform the best.
 
 ```{r}
 train <- sample(c(TRUE, FALSE), nrow(data), TRUE)
@@ -185,14 +185,34 @@ model <-
     subset = train
   )
 
+model2 <-
+  MASS::lda(
+    Transported ~ HomePlanet + CryoSleep + deck + side + Destination + Age + RoomService + FoodCourt + ShoppingMall + Spa + VRDeck,
+    data = data,
+    subset = train
+  )
+
+knn_data <- data %>% 
+  select(Age, RoomService, FoodCourt, ShoppingMall, Spa, VRDeck) 
+
+model3 <-
+  class::knn(
+    train = knn_data[train,],
+    test = knn_data[!train,],
+    cl = data$Transported[train],
+    k = 1
+  )
 
 
-summary(model)
 
 probs <- predict(model, newdata = data[!train, ], type = "response")
+probs2 <-
+  predict(model2, newdata = data[!train, ], type = "response")
 preds <- ifelse(probs > .5, "True", "False")
-table(preds, data[!train, ]$Transported)
+
 mean(preds == data[!train, ]$Transported)
+mean(probs2$class == data[!train, ]$Transported)
+mean(model3 == data[!train, ]$Transported)
 ```
 
 # Prediction
