@@ -176,14 +176,23 @@ sort(abs(vec), decr = T)
 By a backward substitution fitting, we've discovered the following significant predictors.
 
 ```{r}
+train <- sample(c(TRUE, FALSE), nrow(data), TRUE)
 model <-
   glm(
-    Transported ~ HomePlanet + CryoSleep + side + Destination + Age + RoomService + FoodCourt + ShoppingMall + Spa + VRDeck + deck ,
+    Transported ~ HomePlanet + CryoSleep + deck + side + Destination + Age + RoomService + FoodCourt + ShoppingMall + Spa + VRDeck,
     data = data,
-    family = binomial
+    family = binomial,
+    subset = train
   )
 
+
+
 summary(model)
+
+probs <- predict(model, newdata = data[!train, ], type = "response")
+preds <- ifelse(probs > .5, "True", "False")
+table(preds, data[!train, ]$Transported)
+mean(preds == data[!train, ]$Transported)
 ```
 
 # Prediction
