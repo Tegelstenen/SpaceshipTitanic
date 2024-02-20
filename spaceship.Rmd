@@ -1,10 +1,12 @@
 ---
 title: "Spaceship Titanic"
-output: html_notebook
+output:
+  html_document:
+    df_print: paged
 ---
  # Introduction
  
- This is a kaggle competition to predict which passengers on an spaceship Titanic were transported to an alternate dimension. It will rely on a QDA model.
+This is a kaggle competition to predict which passengers on an spaceship Titanic were transported to an alternate dimension. It will rely on a QDA model.
  
  # Tidying
  
